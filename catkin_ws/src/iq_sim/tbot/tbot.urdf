@@ -1,0 +1,12 @@
+<robot name="tbot">
+ <link name="base_link">
+  <visual>
+   <geometry>
+    <box size="0.6 0.3 0.3"/>
+   </geometry>
+   <material name="silver">
+    <color rgba="0.75 0.75 0.75 1"/>
+   </material>
+  </visual>
+ </link>
+</robot>
