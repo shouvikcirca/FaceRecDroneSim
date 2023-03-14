@@ -9,8 +9,15 @@ import sys
 from dronekit import connect, VehicleMode
 import time
 from pymavlink import mavutil
+import math
 
 def displayImage(msg):
+    global expectedDegrees
+    global numFeeds
+
+    rotation_degrees = 15
+    numFeeds+=1
+
     #########  Get Yaw angle #############
     vehicle = connect('udp:127.0.0.1:14550', wait_ready=False, baud=38400)
     vehicle.wait_ready(True, raise_exception = False)
@@ -19,10 +26,16 @@ def displayImage(msg):
     print('mavutil heartbeat received. Proceeding to get yaw angle')
     the_connection.mav.command_long_send(the_connection.target_system, mavutil.mavlink.MAV_COMP_ID_ALL, mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, 0, mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE, 0, 0, 0, 0, 0, 0, 0)
     
-    
     resp = the_connection.recv_match(type='ATTITUDE', blocking = True)
     
-    print('yaw:{}'.format(resp.yaw))
+    yaw_degrees = math.degrees(resp.yaw)
+    print('yaw in degrees:{}, expectedDegrees: {}'.format(yaw_degrees, expectedDegrees))
+
+    # To make sure that we process frames after yaw rotation has happened
+    # TO avoid processinfg frames that come before yaw rotation has happened
+    if not (int(expectedDegrees) - 10 <= int(yaw_degrees) <= int(expectedDegrees) + 10):
+        return
+
     #######################################
     #return
     convertedImage = bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
@@ -31,6 +44,10 @@ def displayImage(msg):
     frameHcentre = convertedImage.shape[1]//2
 
     r = model.predict(convertedImage)
+
+    # If no object detected
+    if list(r)[0].boxes.shape[0] == 0:
+        return
 
     # x and y are the coordinates of the centre of the box
     params = list(r)[0].boxes.xywh[0]
@@ -63,7 +80,8 @@ def displayImage(msg):
         the_connection = mavutil.mavlink_connection('udpin:localhost:14550')
         the_connection.wait_heartbeat()
         print('mavutil heartbeat received. Proceeding to rotate clockwise...')
-        the_connection.mav.command_long_send(the_connection.target_system, the_connection.target_component, mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0, 15, 50, 1, 1, 0, 0, 0)
+        the_connection.mav.command_long_send(the_connection.target_system, the_connection.target_component, mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0, int(rotation_degrees), 50, 1, 1, 0, 0, 0)
+        expectedDegrees+=int(rotation_degrees)
         #time.sleep(20)
 
     elif frameHcentre > boxCentre:
@@ -72,13 +90,14 @@ def displayImage(msg):
         the_connection = mavutil.mavlink_connection('udpin:localhost:14550')
         the_connection.wait_heartbeat()
         print('mavutil heartbeat received. Proceeding to rotate anticlockwise...')
-        the_connection.mav.command_long_send(the_connection.target_system, the_connection.target_component, mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0, 15, 50, -1, 1, 0, 0, 0)
+        the_connection.mav.command_long_send(the_connection.target_system, the_connection.target_component, mavutil.mavlink.MAV_CMD_CONDITION_YAW, 0, int(rotation_degrees), 50, -1, 1, 0, 0, 0)
+        expectedDegrees-=int(rotation_degrees)
         #time.sleep(20)
-   
+
 
 model = YOLO('yolov8s.pt')
 
-##### Initiate drone ###########
+##### Initiate drone #####################################
 vehicle = connect('udp:127.0.0.1:14550', wait_ready=False, baud=38400)
 vehicle.wait_ready(True, raise_exception = False)
 the_connection = mavutil.mavlink_connection('udpin:localhost:14550')
@@ -92,8 +111,27 @@ ackmsg = the_connection.recv_match(type='COMMAND_ACK', blocking=True)
 print(ackmsg)
 
 the_connection.mav.command_long_send(the_connection.target_system, the_connection.target_component, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 10)
-#time.sleep(10)
-#################################
+
+ackmsg = the_connection.recv_match(type='COMMAND_ACK', blocking=True)
+print(ackmsg)
+time.sleep(10)
+###########################################################
+
+
+########## Initiating initial expected degrees #############
+vehicle = connect('udp:127.0.0.1:14550', wait_ready=False, baud=38400)
+vehicle.wait_ready(True, raise_exception = False)
+the_connection = mavutil.mavlink_connection('udpin:localhost:14550')
+the_connection.wait_heartbeat()
+print('mavutil heartbeat received. Proceeding to get yaw angle')
+the_connection.mav.command_long_send(the_connection.target_system, mavutil.mavlink.MAV_COMP_ID_ALL, mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, 0, mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE, 0, 0, 0, 0, 0, 0, 0)
+resp = the_connection.recv_match(type='ATTITUDE', blocking = True)
+    
+expectedDegrees = math.degrees(resp.yaw)
+#########################################################
+
+# To skip rotation check for first frame
+numFeeds = 0
 
 rospy.init_node('getCameraFeed', anonymous = True)
 pub = rospy.Publisher('detectedobjects', Image, queue_size = 10)
